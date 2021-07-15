@@ -1,0 +1,111 @@
+# Oopsie-walkthrough
+
+Enumeration :
+
+Starting of with a basic nmap scan we get the following results:
+
+>nmap -A -sV -SC 10.10.10.29:
+22/tcp open  ssh     OpenSSH 7.6p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 61:e4:3f:d4:1e:e2:b2:f1:0d:3c:ed:36:28:36:67:c7 (RSA)
+|   256 24:1d:a4:17:d4:e3:2a:9c:90:5c:30:58:8f:60:77:8d (ECDSA)
+|_  256 78:03:0e:b4:a1:af:e5:c2:f9:8d:29:05:3e:29:c9:f2 (ED25519)
+80/tcp open  http    Apache httpd 2.4.29 ((Ubuntu))
+|_http-server-header: Apache/2.4.29 (Ubuntu)
+|_http-title: Welcome
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+
+Web server (80) and an SSH Server (22) for the SSH we need to keep an eye open for credentials (probably somewhere on the web server) so lets have a look at the web server :
+http://10.10.10.28
+
+Whilst we are looking around the site I like to have a gobuster scan running so I do the following :
+gobuster dir -u http://10.10.10.28 -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+
+While i wait for this to run lets have a look at the main site : 
+
+Main page has a LOT of dead links so not much to look through, There is a contact number (+44 (0)123 456 789 = pointless) and a contact email address - admin@megacorp.com. I'll keep this in the back pocket for later.
+Scanning through the page source, there is no sneaky, hidden user names and passwords for either a login page or for the SSH so no easy wins here. One thing that did stick out in the S/C was this link - /cdn-cgi/login/script.js - at the very bottom which hints to a login page.
+As there isn't anything else to get excited over lets have a look at out gobuster search : 
+
+/images               (Status: 301) [Size: 311] [--> http://10.10.10.28/images/]
+/themes               (Status: 301) [Size: 311] [--> http://10.10.10.28/themes/]
+/uploads              (Status: 301) [Size: 312] [--> http://10.10.10.28/uploads/]
+/css                  (Status: 301) [Size: 308] [--> http://10.10.10.28/css/]    
+/js                   (Status: 301) [Size: 307] [--> http://10.10.10.28/js/]     
+/fonts                (Status: 301) [Size: 310] [--> http://10.10.10.28/fonts/]  
+
+There where a TONNE of errors i got following this search so the above is the most useful, particularly the uploads domain. Whenever I see this, I automatically assume SHELL!
+
+But to get to the uploads screen we first need a login soooooooo lets go back to the /cdn-cgi/login/script.js. now we shouldn't need the script.js part so lets try just http://10.10.10.28//cdn-cgi/login = SUCCESS!
+
+Now, credentials. this one had me stumped for a long time, at least a good number of hours. No creds anywhere on the site, couldn't use the basic admin:admin, admin:password etc combos and even running an extended nmap search (>nmap -A -sV -SC 10.10.10.29 -p- -vv) yeilded nothing. So i gave in and consulted the forums. To my annoyance, you need to use a password from the PREVIOUS ROOM Archetype -_-' - not gonna lie, i cried a little here.
+
+SOOOOO using the admin part of the admin@megacorp.com email we found (cause using the full email didn't work) and the Password MEGACORP_4dm1n!! I was in.
+
+First thing that catches my eye was the uploads page - however, looks like we need "Super Admin" rights to access the uploads page and we have only logged in as admin - bummer.
+Looking around the other pages there wasn't much on the branding page, but there was an "Accounts" page and a "Clients" page. 
+This seemed to be a list of "Customers" which has a client ID, name and email so these MAY come in hand later. The URL for this page allows you to change the "Client ID" part so you can look through different client data - http://10.10.10.28/cdn-cgi/login/admin.php?content=clients&orgId=1  <= change the 1 too another number and you get different infor or just a blank table. Rather than just manually entering each number you can run this through BURP using the intruder tab > Setting the target at the client id part of the URL and using a 1-100 payload.
+
+The Account Page was the same configuration as the Client page so using the samee logic we should be able to find other accounts. Running the same process through BURP you notice that id number 30 = SUPER ADMIN with an access id of 86575 (our current adin id is 34322).
+Next, after looking around some more and scanning through the sourcecode i have a look at the cookies. And sure enough the admin cookie value is currently sat at 34322. If we change this value too that of the super admin and refresh the page we can now access the upload ...... SHELL TIME!!!!
+
+My go to shell is always the php reversse shell from pentetster monkey (https://github.com/pentestmonkey/php-reverse-shell/blob/master/php-reverse-shell.php) - this thing is AWESOME!!!.
+Just need to change the IP too that of thee VPN (use ifconfig and the "tun0" ip) and set the port to whatever you want, i tend to roll with 4444.
+Once configured set up your Netcat listener (>nc -lnvp 444) and upload that shell ................ nothing. try again.............nothing..............
+And this is part which had me stumped for a while. In most case you need to trigger the shell in order for it to establish. Normally this can be done by clicking on the file in the uploads folder, or in the direcrtory listing for the site or just by clicking a link on the site itself, however no such luck with this normal process. After scratching my head, rubbing my face on the keyboard and staring blankly at the screen for inspiration I started to google like craazy. Although I would say my google-fu is pretty good, still nothing. 
+But then the light bulb turned on - wget. As this tool just retreives data from a site this could be the very thing i need to trigger the shell.
+>wget http://10.10.10.28/uploads/phprevsshell.php - intially this did not work, but after consulting the forums again it was advised you need to upload the shell and QUICKLY setup you listener and run wget - BOOM - we are in.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+User Flag
+
+once in need to always stablise the session to have a decent terminal window - python3 -c 'import pty; pty.spawn("/bin/bash")' - this is my main goto.
+Quick look around we can find a /home directory and a user directory /robert and there is the user flag - user.txt. That seemed too easy :/
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Root flag
+
+This next step took a lot of looking around as i wasn't really sure what to look for other than some more credentials. The Client and Account pages on the main site suggest there must be a database file for those account/client pages so i ran with that. After a while I stumbled onto cd /var/www/html - we can see our uploads folder but we can also see the cdn-cgi which was referenced in the login page URL so I check this out > cd into login > and then we have the "db.php" file. Using cat to read this we get the following:
+
+<?php
+$conn = mysqli_connect('localhost','robert','M3g4C0rpUs3r!','garage');
+?>
+
+I did go down the mysql route with this one but for me this was a dead end - what you can doo though is use the above redentials for the SSH login : 
+>ssh robert@10.10.10.28
+And we are in as Robert.
+Now this is where it gets broken. While logged in as Robert I was able to use sudo VIM > enter the following for the VIM shell :
+:!sh
+
+This then gave me root which you can then cd into root and cat out the root flag. Looking at other walkthroughs (as I thought his was a little sus) what i should have done is navigate too /usr/bin/ and run ./bugtracker whichh gives you :
+
+------------------
+: EV Bug Tracker :
+------------------
+
+Provide Bug ID:
+
+I tried a few numbers and found that -1 gave you :
+
+------------------
+: EV Bug Tracker :
+------------------
+
+Provide Bug ID: -1
+---------------
+
+cat: /root/reports/-1: No such file or directory
+
+This suggests the function is just cat -ing out data from this location (which we cant access as we are not root) but what we can do it pop in some malicious code to make the "Cat" function run a bash shell which should then give us root (I did have to look this one up as i wasn't comfortable with this full process) :
+>export PATH=/tmp:$PATH
+>cd /tmp
+>echo '/bin/bash' > cat
+>chmod +x cat
+
+Now if we go back into /usr/bin - run bugtracker - after that >whoami = root
+Then the rest is history.
+
+
+
+
